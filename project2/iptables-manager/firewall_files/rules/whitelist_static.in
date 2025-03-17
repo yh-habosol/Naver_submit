@@ -1,0 +1,5 @@
+-A WL_STATIC_IN     -i eth0+    -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x05"   --nflog-group 30
+-A WL_STATIC_IN     -i eth0+  											-j UNKNOWN
+
+-A WL_STATIC_OUT    -o eth0+    -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x05"   --nflog-group 30
+-A WL_STATIC_OUT    -o eth0+											-j UNKNOWN

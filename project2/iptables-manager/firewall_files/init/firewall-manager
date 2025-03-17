@@ -1,0 +1,70 @@
+#!/bin/sh
+#
+# Copyright(c) 2022 LG Electronics
+#
+# * Title : Network Firewall Rule Loader
+# * Author: autosec-firewall-dev@lge.com
+#
+PATH=/sbin:/usr/sbin/:/bin:/usr/bin
+DEFAULT_RULE_PATH="/usr/etc/firewall-manager/rules/"
+IP4TABLES_RESTORE="/usr/sbin/iptables-restore -w"
+IP6TABLES_RESTORE="/usr/sbin/ip6tables-restore -w"
+IPV6_DEFAULT_RULE="$DEFAULT_RULE_PATH/20_wl_static.conf"
+FIREWALL_FULE="$DEFAULT_RULE_PATH/firewall_rule.conf"
+#IPV4_BASE="$DEFAULT_RULE_PATH/10_ipv4_base.conf"
+#IPV6_BASE="$DEFAULT_RULE_PATH/20_ipv6_base.conf"
+FLUSH_RULE="$DEFAULT_RULE_PATH/30_flush.conf"
+DEBUG_ON="$DEFAULT_RULE_PATH/10_ipv4_debug_on.conf"
+DEBUG_OFF="$DEFAULT_RULE_PATH/10_ipv4_debug_off.conf"
+NOFLUSH="-n"
+load() {
+	echo -n "Load network firewall rules ... "
+	
+	if [ -r $2 ] && ( [ $1 = 4 ] || [ $1 = 6 ] ); then
+		echo -n "$1 $2 "
+		if [ $1 = 6 ]; then
+			$IP6TABLES_RESTORE $3 < "$2" 2>> /dev/null
+		else
+			$IP4TABLES_RESTORE $3 < "$2" 2>> /dev/null
+		fi
+		if [ $? -ne 0 ]; then
+			echo "failure"
+			return 3
+		else
+			echo "success"
+		fi
+	else
+		echo "failure."
+		return 3
+	fi
+}
+case "$1" in
+    start)
+        load 4 $IPV4_BASE
+		load 6 $IPV6_BASE
+		load 4 $DEBUG_ON $NOFLUSH
+        load 6 $IPV6_DEFAULT_RULE $NOFLUSH
+    ;;
+    restart)
+        load 4 $FLUSH_RULE
+        load 6 $FLUSH_RULE
+        load 4 $IPV4_BASE
+		load 6 $IPV6_BASE
+		load 4 $DEBUG_ON $NOFLUSH
+        load 6 $IPV6_DEFAULT_RULE $NOFLUSH
+    ;;
+    stop)
+        load 4 $FLUSH_RULE
+        load 6 $FLUSH_RULE
+    ;;
+    debug_on)
+        load 4 $DEBUG_ON $NOFLUSH
+    ;;
+    debug_off)
+        load 4 $DEBUG_OFF $NOFLUSH
+    ;;
+    *)
+        echo "Usage: $0 start|stop|restart|debug_on|debug_off" >&2
+        exit 3
+    ;;
+esac

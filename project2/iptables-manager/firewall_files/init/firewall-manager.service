@@ -1,0 +1,19 @@
+#
+# Copyright(c) 2023 LG Electronics
+#
+# * Title : Network Firewall Service
+# * Author: autosec-firewall-dev@lge.com
+#
+[Unit]
+Description=Network Firewall
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/firewall-manager start
+ExecStop=/usr/bin/firewall-manager stop
+
+[Install]
+WantedBy=multi-user.target

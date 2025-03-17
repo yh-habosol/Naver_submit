@@ -1,0 +1,122 @@
+:INPUT              ACCEPT
+:OUTPUT             ACCEPT
+:FORWARD            ACCEPT
+:DEBUG_IN           -
+:DEBUG_OUT          -
+:DEBUG_FW           -
+:HARDEN             -
+# HARDEN lazy in / out
+:HARDEN_LIN         -
+:HARDEN_LOUT        -
+:HARDEN_LFW         -
+# whitelist (model specific)
+:WL_STATIC_IN       -
+:WL_STATIC_OUT      -
+:WL_STATIC_FW       -
+:WL_DYNAMIC_IN      -
+:WL_DYNAMIC_OUT     -
+:WL_DYNAMIC_FW      -
+# these debug chains are different from DEBUG_IN/OUT
+# packets which pass through HARDEN rules can enter these chains.
+:WL_DEBUG_IN        -
+:WL_DEBUG_OUT       -
+################################ IGNORED #############################
+# localhost --> localhost
+-A INPUT    -4  -i lo   -s 127.0.0.0/8  -d 127.0.0.0/8  -j ACCEPT
+-A OUTPUT   -4  -o lo   -s 127.0.0.0/8  -d 127.0.0.0/8  -j ACCEPT
+-A INPUT    -6  -i lo   -s ::1          -d ::1          -j ACCEPT
+-A OUTPUT   -6  -o lo   -s ::1          -d ::1          -j ACCEPT
+################################ FLOW ################################
+# INPUT chain
+-A INPUT                    -j DEBUG_IN
+-A INPUT                    -j HARDEN
+-A INPUT                    -j WL_DYNAMIC_IN
+-A INPUT                    -j WL_STATIC_IN
+-A INPUT                    -j HARDEN_LIN
+-A INPUT                    -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x05"   --nflog-group 30
+#-A INPUT                    -m nfacct   --nfacct-name 0x05
+# OUTPUT chain
+-A OUTPUT                   -j DEBUG_OUT
+-A OUTPUT                   -j HARDEN
+-A OUTPUT                   -j WL_DYNAMIC_OUT
+-A OUTPUT                   -j WL_STATIC_OUT
+-A OUTPUT                   -j HARDEN_LOUT
+# OUTPUT chain is blacklisted
+#-A OUTPUT                   -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x05"  --nflog-group 30
+# FORWARD chain
+-A FORWARD                  -j DEBUG_FW
+-A FORWARD                  -j HARDEN
+-A FORWARD                  -j WL_DYNAMIC_FW
+-A FORWARD                  -j WL_STATIC_FW
+-A FORWARD                  -j HARDEN_LFW
+-A FORWARD                  -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x05"   --nflog-group 30
+#-A FORWARD                  -m nfacct   --nfacct-name 0x05
+################################ NFLOG ##############################
+:ABNORMAL_STATE         -
+#-A ABNORMAL_STATE       -m nfacct   --nfacct-name 0x01
+#-A ABNORMAL_STATE       -j DROP
+:FLOOD                  -
+#-A FLOOD                -m nfacct   --nfacct-name 0x02
+#-A FLOOD                -j DROP
+:SUSPICIOUS_FORMAT      -
+#-A SUSPICIOUS_FORMAT    -m nfacct   --nfacct-name 0x03
+#-A SUSPICIOUS_FORMAT    -j DROP
+:DISALLOWD_PROTOCOL     -
+#-A DISALLOWD_PROTOCOL   -m nfacct   --nfacct-name 0x04
+#-A DISALLOWD_PROTOCOL   -j DROP
+:UNKNOWN                -
+#-A UNKNOWN              -m nfacct   --nfacct-name 0x05
+#-A UNKNOWN              -j DROP
+:NO_SYN_CT_NEW      -
+-A NO_SYN_CT_NEW    -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x01"      --nflog-group 20
+-A NO_SYN_CT_NEW    -j ABNORMAL_STATE
+:SYN_CT_NO_NEW_ESTABLISHED      -
+-A SYN_CT_NO_NEW_ESTABLISHED    -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x01"      --nflog-group 20
+-A SYN_CT_NO_NEW_ESTABLISHED    -j ABNORMAL_STATE
+:CT_INVALID         -
+-A CT_INVALID       -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x01"      --nflog-group 20
+-A CT_INVALID       -j ABNORMAL_STATE
+:SYN_FLOOD          -
+-A SYN_FLOOD        -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x02"      --nflog-group 20
+-A SYN_FLOOD        -j FLOOD
+:UDP_INCOMPLETE     -
+-A UDP_INCOMPLETE   -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x03"      --nflog-group 20
+-A UDP_INCOMPLETE   -j SUSPICIOUS_FORMAT
+:ICMP_IN            -
+-A ICMP_IN          -4  -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x04"  --nflog-group 20
+-A ICMP_IN          -6  -m limit    --limit 1/m -j NFLOG    --nflog-prefix "0x04"  --nflog-group 20
+-A ICMP_IN          -j DISALLOWD_PROTOCOL
+:MC_OUT             -
+# only for debugging.
+-A MC_OUT           -j NFLOG    --nflog-prefix "0xff" --nflog-group 29
+#-A MC_OUT           -j DROP
+################################ HARDEN ################################
+# monitor connection state
+# first tcp packet should have only a syn flag
+-A HARDEN       -p tcp  ! --syn -m conntrack    --ctstate NEW               -j NO_SYN_CT_NEW
+# packets have only syn flag, should be in NEW state
+-A HARDEN       -p tcp  --syn   -m conntrack    ! --ctstate NEW,ESTABLISHED -j SYN_CT_NO_NEW_ESTABLISHED
+# drop packets on INVALID state
+-A HARDEN       -m conntrack    --ctstate INVALID                           -j CT_INVALID
+# allow established, related packets
+-A HARDEN       -m conntrack    --ctstate ESTABLISHED,RELATED               -j ACCEPT
+# syn flooding
+-A HARDEN       -p tcp  --syn   -m hashlimit    --hashlimit-name "synfloodng"   --hashlimit-above 60/sec    --hashlimit-burst 8    --hashlimit-mode srcip,dstport  -j SYN_FLOOD
+### Layer 4 - UDP filtering rules ###
+# Drop incomplete udp packets or udp scan packets
+# Ipv4 header 20 bytes + udp header 8 bytes = 28 bytes
+# Ipv6 header 40 bytes + udp header 8 bytes = 48 bytes
+# If udp payload length is 0, it is regarded as a packet used for udp scan.
+-A HARDEN   -4    -p udp  -m length   --length 0:28                           -j UDP_INCOMPLETE
+-A HARDEN   -6    -p udp  -m length   --length 0:48                           -j UDP_INCOMPLETE
+-A WL_STATIC_IN                                                             -j WL_DEBUG_IN
+-A WL_STATIC_OUT                                                            -j WL_DEBUG_OUT
+# drop icmp request
+-A HARDEN_LIN   -4  -p icmp     -m conntrack    --ctstate NEW               -j ICMP_IN
+-A HARDEN_LIN   -6  -p icmpv6   --icmpv6-type neighbor-solicitation         -j ACCEPT
+-A HARDEN_LIN   -6  -p icmpv6   --icmpv6-type neighbor-advertisement        -j ACCEPT
+-A HARDEN_LIN   -6  -p icmpv6   -m conntrack    --ctstate NEW               -j ICMP_IN
+# block sending multicast for concealing IP from other
+-A HARDEN_LOUT  -6  -p icmpv6   --icmpv6-type neighbor-solicitation         -j ACCEPT
+-A HARDEN_LOUT  -m addrtype --dst-type MULTICAST                            -j MC_OUT
+
